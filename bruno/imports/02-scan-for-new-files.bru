@@ -1,0 +1,25 @@
+meta {
+  name: Scan for new files
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/dataset-imports/scan
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("returns 202", function () {
+    expect(res.status).to.equal(202);
+  });
+  test("counts the folder's files", function () {
+    expect(res.body.files_found).to.be.a("number");
+  });
+}
+
+docs {
+  Queues an import for every CSV in the folder not seen before; Celery
+  Beat does the same every minute. A second run finds nothing new.
+}

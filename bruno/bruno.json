@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Data Reaper",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

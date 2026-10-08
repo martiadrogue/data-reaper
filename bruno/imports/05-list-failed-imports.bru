@@ -1,0 +1,22 @@
+meta {
+  name: List failed imports
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/dataset-imports?status=failed
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("returns 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}
+
+docs {
+  A filtered listing: one page of up to 50. Retry one with
+  POST /api/dataset-imports/{id}/retry.
+}

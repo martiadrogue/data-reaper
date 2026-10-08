@@ -1,0 +1,103 @@
+"""Admin-only routes for user accounts, kept in Keycloak."""
+
+from data_reaper.domain.ports.user_directory import AbstractUserDirectory
+from data_reaper.presentation.api.dependencies import (
+    get_user_directory,
+    require_admin,
+)
+from data_reaper.schemas.auth import (
+    UserCreate,
+    UserOut,
+    UsersPageOut,
+    UserUpdate,
+)
+from data_reaper.services import user_service
+from fastapi import Depends, Query, status
+from fastapi.routing import APIRouter
+
+router = APIRouter(prefix="/api/users", tags=["Users"])
+
+
+@router.get("", response_model=UsersPageOut)
+async def get_users(
+    limit: int = Query(default=50, ge=1, le=50),
+    offset: int = Query(default=0, ge=0, le=250),
+    user_directory: AbstractUserDirectory = Depends(get_user_directory),
+    _: UserOut = Depends(require_admin),
+) -> UsersPageOut:
+    """List users, ordered by email (admin only).
+
+    Unfiltered, so it paginates: pages of up to 50, at most 300 users
+    deep.
+
+    Raises:
+        ValidationException: 403 for non-admins.
+        ExternalServiceException: 502 if Keycloak failed.
+    """
+    return await user_service.get_users(user_directory, limit=limit, offset=offset)
+
+
+@router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user_input: UserCreate,
+    user_directory: AbstractUserDirectory = Depends(get_user_directory),
+    _: UserOut = Depends(require_admin),
+) -> UserOut:
+    """Create a `user` account with a temporary password (admin only).
+
+    Raises:
+        ValidationException: 403 for non-admins; 400 if the email is
+            taken.
+        ExternalServiceException: 502 if Keycloak failed.
+    """
+    return await user_service.create_user(user_directory, user_input)
+
+
+@router.get("/{user_id}", response_model=UserOut)
+async def get_user(
+    user_id: str,
+    user_directory: AbstractUserDirectory = Depends(get_user_directory),
+    _: UserOut = Depends(require_admin),
+) -> UserOut:
+    """Get one user, enabled or not (admin only).
+
+    Raises:
+        ValidationException: 403 for non-admins; 404 if the user is
+            missing.
+        ExternalServiceException: 502 if Keycloak failed.
+    """
+    return await user_service.get_user(user_directory, user_id)
+
+
+@router.patch("/{user_id}", response_model=UserOut)
+async def update_user(
+    user_id: str,
+    user_input: UserUpdate,
+    user_directory: AbstractUserDirectory = Depends(get_user_directory),
+    _: UserOut = Depends(require_admin),
+) -> UserOut:
+    """Change a user's email, temporary password, or role (admin only).
+
+    Raises:
+        ValidationException: 403 for non-admins; 404 if the user is
+            missing; 400 if the email is taken or it would demote the
+            last enabled admin.
+        ExternalServiceException: 502 if Keycloak failed.
+    """
+    return await user_service.update_user(user_directory, user_id, user_input)
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def disable_user(
+    user_id: str,
+    user_directory: AbstractUserDirectory = Depends(get_user_directory),
+    _: UserOut = Depends(require_admin),
+) -> None:
+    """Disable a user; Keycloak keeps the account (admin only).
+
+    Raises:
+        ValidationException: 403 for non-admins; 404 if the user is
+            missing; 400 if it is the last enabled admin.
+        ExternalServiceException: 502 if Keycloak failed.
+    """
+    await user_service.disable_user(user_directory, user_id)

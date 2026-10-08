@@ -1,0 +1,21 @@
+meta {
+  name: Search TheFork places
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/places?text=grill&source=thefork.es
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("returns 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}
+
+docs {
+  Places whose name or address contains "grill", from TheFork, by name.
+}

@@ -1,0 +1,42 @@
+version: 1
+disable_existing_loggers: false
+
+# One JSON line per record on stdout, for every process (API, worker,
+# beat). Docker keeps the lines; Grafana Alloy ships them to Loki.
+formatters:
+  json:
+    (): data_reaper.core.logging.JsonFormatter
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: json
+    stream: ext://sys.stdout
+
+# Listing a logger with no handlers clears the ones uvicorn and Celery
+# install, so every line goes through the root's single handler.
+loggers:
+  uvicorn:
+    level: INFO
+    handlers: []
+    propagate: true
+  uvicorn.error:
+    level: INFO
+    handlers: []
+    propagate: true
+  uvicorn.access:
+    level: INFO
+    handlers: []
+    propagate: true
+  celery:
+    level: INFO
+    handlers: []
+    propagate: true
+  data_reaper:
+    level: INFO # raised to DEBUG in development by `setup_logging`
+    handlers: []
+    propagate: true
+
+root:
+  level: INFO
+  handlers: [console]

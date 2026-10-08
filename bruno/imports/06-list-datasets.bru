@@ -1,0 +1,21 @@
+meta {
+  name: List datasets
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/datasets
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("returns both datasets", function () {
+    expect(res.body.map((d) => d.name)).to.eql(["places", "events"]);
+  });
+}
+
+docs {
+  places and events: their collection, columns, and records per source.
+}

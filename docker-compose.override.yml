@@ -1,0 +1,61 @@
+services:
+  db:
+    restart: on-failure
+
+  rabbitmq:
+    restart: on-failure
+
+  web:
+    build:
+      target: development
+    container_name: data_reaper_web_dev
+    restart: on-failure
+    ports:
+      - "8100:8000"
+    volumes:
+      - .:/apps/martiadrogue/data-reaper
+      # The validated CSVs to import (`dataset_import_dir`), read-only:
+      # the importer never changes a crawler's only copy. `web` needs
+      # them for `POST /api/dataset-imports/scan`.
+      - ${CSV_SOURCE_DIR:-./var/csv/validated}:/var/lib/data_reaper/csv:ro
+
+  celery_worker:
+    build:
+      target: development
+    container_name: data_reaper_worker_dev
+    restart: on-failure
+    volumes:
+      - .:/apps/martiadrogue/data-reaper
+      - ${CSV_SOURCE_DIR:-./var/csv/validated}:/var/lib/data_reaper/csv:ro
+    # One import at a time: files then land oldest run first, and two
+    # files never race to insert the same new record.
+    command: celery -A data_reaper.celery.app worker -Q dataset-import --concurrency 1
+
+  celery_beat:
+    build:
+      target: development
+    container_name: data_reaper_beat_dev
+    restart: on-failure
+    volumes:
+      - .:/apps/martiadrogue/data-reaper
+    command: celery -A data_reaper.celery.app beat --schedule=/tmp/celerybeat-schedule
+
+  frontend:
+    build:
+      target: development
+    container_name: data_reaper_frontend_dev
+    restart: on-failure
+    ports:
+      - "3100:3000"  # Reflex frontend (Next.js dev server)
+      - "8101:8000"  # Reflex's own backend - remapped since FastAPI `web` already owns host 8100
+    environment:
+      API_BASE_URL: http://web:8000
+      REFLEX_API_URL: http://localhost:8101
+    volumes:
+      # Scoped mounts only (unlike `web`'s whole-repo mount): bind-mounting
+      # the whole frontend/ dir would shadow the image-baked .web/ with the
+      # host's empty one, forcing a full Node/bun re-download on every `up`.
+      - ./frontend/src:/apps/martiadrogue/data-reaper/frontend/src
+      - ./frontend/rxconfig.py:/apps/martiadrogue/data-reaper/frontend/rxconfig.py
+      - ./frontend/assets:/apps/martiadrogue/data-reaper/frontend/assets
+      - ./frontend/tests:/apps/martiadrogue/data-reaper/frontend/tests

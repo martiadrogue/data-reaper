@@ -1,0 +1,83 @@
+# Contributing to the Frontend
+
+Rules for code under `frontend/`. `MUST`/`MUST NOT` are enforced in review.
+For the backend, see the root [docs/CONTRIBUTING.md](../../docs/CONTRIBUTING.md).
+
+## 1. Architecture
+
+- **FR1.1** The UI MUST talk to FastAPI only through `api_client.py`,
+  from event handlers (server side). Components MUST NOT call the API, and
+  the browser never does.
+- **FR1.2** `api_client.py` MUST have one small async function per
+  endpoint, taking the access token first,
+  returning the decoded JSON (or `None` for an empty body), and raising
+  `ApiError` for any non-2xx. No retries, no caching.
+- **FR1.2a** Keycloak (login, code exchange, refresh, logout) MUST be
+  reached only through `oidc_client.py`, and handlers MUST get the token
+  through `get_session(self)`, which refreshes it, never
+  `get_state(AuthState)`.
+- **FR1.3** Business rules (who may do what, which imports can be retried,
+  how rows are typed or deduplicated) MUST NOT be re-implemented in the UI.
+  Send the request and show the API's message. The UI MAY hide or disable
+  controls to guide the user (e.g. Retry on an imported file); the API still
+  decides.
+- **FR1.4** Turning input into API queries, and API data into display
+  text, MUST live in `forms.py` as pure functions (no Reflex, no I/O).
+- **FR1.5** Each page has one `rx.State` in `state/`, which MAY be shared
+  (`AuthState` serves `/`, `/login`, `/register`, and `/auth/callback`;
+  `PlacesState` and
+  `EventsState` share `RecordsMixin`); one page module per
+  route, in `pages/`; reusable pieces in `components/`.
+
+## 2. State and Events
+
+- **FR2.1** Every page behind login MUST have an `on_load` handler that
+  redirects to `/login` without a token, then loads its data. `/login`
+  has none; `/register` and `/auth/callback` only drive the Keycloak login.
+- **FR2.2** Every `api_client` call MUST sit in a `try` catching
+  `ApiError`, shown in the page's or dialog's error var; handlers MUST NOT
+  let it escape.
+- **FR2.3** State vars holding API data MUST be plain `dict`/`list[dict]`
+  as the API returns them; derived values are `@rx.var`s.
+- **FR2.4** Do not declare a var named like a dynamic route arg
+  (e.g. `import_id`); Reflex creates it and refuses shadowing.
+- **FR2.5** After a mutation (scan, retry), reload from the API instead
+  of patching local lists.
+- **FR2.6** Tokens and passwords MUST NOT be logged or rendered. Only
+  the access token, email, and role live in cookies; the refresh and id
+  tokens, and a login's state and PKCE verifier, MUST stay in
+  backend-only vars (a leading `_`), never sent to the browser.
+
+## 3. Components
+
+- **FR3.1** Pages MUST be wrapped in `page_shell` (auth pages excepted).
+- **FR3.2** Forms MUST use uncontrolled inputs with `default_value` and a
+  `key` that changes when the edited item changes; selects are controlled
+  through state setters.
+- **FR3.3** A select's "no filter" option MUST be `forms.ALL` (Radix
+  selects can't hold "").
+- **FR3.4** Use Radix components (`rx.*`) and theme tokens
+  (`var(--gray-5)`, `color_scheme=`); no custom CSS files.
+
+## 4. Style and Quality
+
+- **FR4.1** Black and Ruff (repo `pyproject.toml`) MUST pass; the docstring
+  rules are not enforced here, but a helper whose name doesn't say it all
+  gets a one-line docstring.
+- **FR4.2** Cyclomatic complexity MUST be grade A (`radon cc`), or B with a
+  one-line comment saying why.
+- **FR4.3** Every public function in `forms.py`, `api_client.py`, and
+  `oidc_client.py` MUST be covered by `frontend/tests/` (pytest + anyio;
+  `httpx.MockTransport` via `api_client.TRANSPORT` or
+  `oidc_client.TRANSPORT`, never the network). A new endpoint function
+  gets a row in `test_api_client.py`'s `ENDPOINTS` table.
+- **FR4.4** Names follow the backend's ubiquitous language (Dataset
+  Import, Dataset, place, event, source, item id), never "job".
+
+## 5. Pull Request Checklist
+
+- [ ] `make format` and `make lint` pass.
+- [ ] `make test-frontend` passes; new helpers are tested.
+- [ ] `docker compose exec -T web radon cc frontend/src -n B` prints nothing (or each B is justified).
+- [ ] The frontend compiles (`docker logs data_reaper_frontend_dev` shows "App running") and the changed flow was clicked through in a browser.
+- [ ] `frontend/docs/ARCHITECTURE.md` lists any new page, state, or API call.

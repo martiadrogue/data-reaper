@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=61.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-reaper"
+version = "0.1.0"
+description = "Imports Night Crawler's validated CSVs into MongoDB: FastAPI, Celery, RabbitMQ"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Marti Adrogue", email = "marti.adrogue@gmail.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Framework :: FastAPI",
+]
+
+dependencies = [
+    "fastapi>=0.142.0",  # `fastapi.telemetry` (core/telemetry.py)
+    "pydantic-settings>=2.14.2",
+    "email-validator>=2.2.0",
+    "uvicorn[standard]>=0.45.0",
+    # The production server (night-infra): Gunicorn running Uvicorn
+    # workers.
+    "gunicorn>=23.0.0",
+    "uvicorn-worker>=0.3.0",
+    "celery[rabbitmq]>=5.6.0",
+    # PyMongo's native asyncio API (`AsyncMongoClient`) replaces Motor.
+    "pymongo>=4.13",
+    "amqp>=5.2.0",
+    "pyjwt[crypto]>=2.8.0",
+    # Keycloak's Admin REST API (infrastructure/external/), and the API
+    # tests' ASGI client (`httpx.ASGITransport`).
+    "httpx>=0.28.1",
+    # `logging_config.yaml` (core/logging.py).
+    "pyyaml>=6.0",
+    "anyio>=4.12.1",
+    # Traces and metrics, pushed over OTLP (core/telemetry.py); the
+    # instrumentations are released in lockstep with the SDK. FastAPI
+    # traces itself (`fastapi.telemetry`), so it needs none.
+    "opentelemetry-sdk>=1.45.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.0",
+    "opentelemetry-instrumentation-celery>=0.66b0",
+    "opentelemetry-instrumentation-pymongo>=0.66b0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "prometheus-fastapi-instrumentator>=8.0.2",
+    "pytest>=8.0.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.3.0",
+    "black>=24.0.0",
+    "radon>=6.0.1"
+]
+
+[tool.setuptools.package-dir]
+"" = "backend/src"
+
+[tool.setuptools.packages.find]
+where = ["backend/src"]
+
+[tool.ruff]
+extend-exclude = ["frontend/.web"]
+
+[tool.ruff.lint]
+# CONTRIBUTING.md §3.3: Google-style docstrings, 72-column doc lines.
+extend-select = ["D", "W505"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pycodestyle]
+max-doc-length = 72
+
+[tool.black]
+extend-exclude = "frontend/\\.web/"
+# Matches the image's Python; inferring from `requires-python` targets
+# unreleased versions and disables the AST safety check.
+target-version = ["py311"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Body"
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/**" = ["DTZ001", "D", "W505"]
+"frontend/**" = ["D", "W505"]
+
+[tool.radon]
+exclude = "backend/tests/*,venv/*,build/*,dist/*"
+ignore = "tests,venv"
+cc_min = "A"          # Minimum grade to show (A, B, C, D, E, F)
+show_complexity = true # Equivalent to the -s flag (shows CC score next to grade)
+average = true        # Equivalent to -a (calculates overall average score)
+order = "SCORE"       # Sort output: SCORE (descending complexity), LINES, or ALPHA
+show_mi = true        # Display score details alongside the grade
+
+[tool.pytest.ini_options]
+markers = [
+    "anyio: mark test as async (run via the anyio pytest plugin)",
+]
+testpaths = ["backend/tests"]

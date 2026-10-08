@@ -1,0 +1,42 @@
+{
+	"name": "Data Reaper",
+	"dockerComposeFile": [
+		"../docker-compose.yml",
+		"../docker-compose.override.yml"
+	],
+	"service": "web",
+	"runServices": [
+		"db",
+		"redis",
+		"rabbitmq",
+		"web",
+		"celery_worker",
+		"celery_beat",
+		"frontend"
+	],
+	"workspaceFolder": "/apps/martiadrogue/data-reaper",
+	"overrideCommand": false,
+	"remoteUser": "data-reaper-app",
+    "containerUser": "data-reaper-app",
+    "customizations": {
+        "vscode": {
+            "runArgs": [
+                "--add-host=host.docker.internal:host-gateway"
+            ],
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff"
+            ],
+            "settings": {
+                "devContainers.serverStoragePath": "/apps/martiadrogue/data-reaper/.vscode-server",
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "python.analysis.typeCheckingMode": "basic",
+                "[python]": {
+                    "editor.defaultFormatter": "charliermarsh.ruff",
+                    "editor.formatOnSave": true
+                }
+            }
+        }
+    }
+}

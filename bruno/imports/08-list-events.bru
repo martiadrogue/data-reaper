@@ -1,0 +1,21 @@
+meta {
+  name: List events
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/events
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("returns 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}
+
+docs {
+  Every event, by name, 50 per page (add ?offset=50 for the next).
+}

@@ -1,0 +1,243 @@
+# Pinned so the project's container labels match the filter in
+# `observability/alloy/config.alloy`, whatever the checkout is named.
+# Container names and host ports differ from Night Crawler's, so both
+# stacks can run side by side.
+name: data-reaper
+
+x-app-env: &app-env
+  MONGO_URL: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@db:27017/?replicaSet=rs0&authSource=admin
+  MONGO_DATABASE: ${MONGO_DATABASE}
+  # Empty (telemetry off) unless `make up-observability` sets it.
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  # The API's Keycloak service account (`importer-api`), for the Admin
+  # REST API.
+  KEYCLOAK_ADMIN_CLIENT_SECRET: ${KC_IMPORTER_API_SECRET:-}
+
+services:
+  # --- DATABASE ---
+  db:
+    # 8.2.x: 8.0 and `latest` refuse to start on Linux kernel >= 6.19
+    # (SERVER-121912).
+    image: mongo:8.2
+    container_name: data_reaper_db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE}
+    # Single-node replica set: multi-document transactions (the Unit of
+    # Work) need one. With auth on, replica set members need a shared
+    # keyfile - one node, so a fresh one per start is fine. The oplog is
+    # capped at 1 GB: its default (5% of the disk) lets a busy dev or
+    # test database grow the volume by tens of GB.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        head -c 756 /dev/urandom | base64 > /tmp/mongo-keyfile
+        chmod 400 /tmp/mongo-keyfile
+        chown mongodb:mongodb /tmp/mongo-keyfile
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /tmp/mongo-keyfile --bind_ip_all --oplogSize 1024
+    # WiredTiger keeps one file per collection and index open; Docker's
+    # default limit makes it panic ("Too many open files") once enough
+    # collections exist. 64000 is MongoDB's recommended production limit.
+    ulimits:
+      nofile:
+        soft: 64000
+        hard: 64000
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    # Initiates the replica set on first run, then reports healthy only
+    # once this node is a writable primary.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD"
+          --authenticationDatabase admin --eval
+          "try { rs.status() } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'db:27017'}]}) }
+          quit(db.hello().isWritablePrimary ? 0 : 1)"
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # --- MESSAGE BROKER ---
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: data_reaper_broker
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- FASTAPI APPLICATION BASE ---
+  web:
+    build:
+      context: .
+    user: data-reaper-app
+    env_file:
+      - .env
+    environment: *app-env
+    # `identity` reaches Night Crawler's Keycloak (its stack owns both).
+    networks:
+      - default
+      - identity
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # --- CELERY WORKER BASE ---
+  celery_worker:
+    build:
+      context: .
+    user: data-reaper-app
+    env_file:
+      - .env
+    environment: *app-env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+
+  # --- CELERY BEAT (SCHEDULER) BASE ---
+  celery_beat:
+    build:
+      context: .
+    user: data-reaper-app
+    env_file:
+      - .env
+    environment: *app-env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  # --- REFLEX FRONTEND BASE ---
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    user: data-reaper-frontend
+    env_file:
+      - .env
+    environment:
+      # The `importer-ui` client's secret, for the code exchange.
+      OIDC_CLIENT_SECRET: ${KC_IMPORTER_UI_SECRET:-}
+    # `identity` reaches Night Crawler's Keycloak (its stack owns both).
+    networks:
+      - default
+      - identity
+    depends_on:
+      web:
+        condition: service_started
+
+  # --- OBSERVABILITY (opt-in: `make up-observability`) ---
+  # Metrics: Prometheus scrapes the API, RabbitMQ, and celery-exporter,
+  # and receives the app's own metrics from Alloy (remote write).
+  # Logs: Alloy reads every container's stdout and pushes it to Loki.
+  # Traces: the app pushes them to Alloy (OTLP), which sends them to
+  # Tempo. Grafana shows all three. See docs/ARCHITECTURE.md#observability.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: data_reaper_prometheus
+    profiles: [observability]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      # Alloy pushes the app's OpenTelemetry metrics here.
+      - --web.enable-remote-write-receiver
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  celery_exporter:
+    image: danihodovic/celery-exporter:0.12.0
+    container_name: data_reaper_celery_exporter
+    profiles: [observability]
+    environment:
+      CE_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672//
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  loki:
+    image: grafana/loki:3.5.3
+    container_name: data_reaper_loki
+    profiles: [observability]
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./observability/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+
+  alloy:
+    image: grafana/alloy:v1.10.0
+    container_name: data_reaper_alloy
+    profiles: [observability]
+    command: run /etc/alloy/config.alloy --storage.path=/var/lib/alloy/data
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Read-only, but still lets Alloy list and read every container
+      # on the host: keep this stack to development machines.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+      - tempo
+
+  tempo:
+    image: grafana/tempo:2.8.2
+    container_name: data_reaper_tempo
+    profiles: [observability]
+    command: -config.file=/etc/tempo/tempo-config.yaml
+    volumes:
+      - ./observability/tempo/tempo-config.yaml:/etc/tempo/tempo-config.yaml:ro
+      - tempo_data:/var/tempo
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: data_reaper_grafana
+    profiles: [observability]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    ports:
+      - "3130:3000" # host 3100 is the Reflex frontend
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+# Created by Night Crawler's `make up` (or ours); never removed by `down`.
+networks:
+  identity:
+    name: identity
+    external: true
+
+volumes:
+  mongo_data:
+  mongo_config:
+  rabbitmq_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+  tempo_data:

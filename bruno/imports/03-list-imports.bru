@@ -1,0 +1,27 @@
+meta {
+  name: List imports
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/dataset-imports
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  if (res.body.items.length) {
+    bru.setEnvVar("importId", res.body.items[0].id);
+  }
+}
+
+tests {
+  test("returns 200", function () {
+    expect(res.status).to.equal(200);
+  });
+}
+
+docs {
+  Newest first, with how many imports are in each status.
+}
